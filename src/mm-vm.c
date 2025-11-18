@@ -48,9 +48,44 @@ struct vm_area_struct *get_vma_by_num(struct mm_struct *mm, int vmaid)
 
 int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
 {
-    __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
+  /*    OLD
+  __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
+  return 0;
+  */
+    if (!caller || !caller->krnl || !caller->krnl->mram || !caller->krnl->active_mswp)
+        return -1;
+
+    struct memphy_struct *mram = caller->krnl->mram;
+    struct memphy_struct *mswp = caller->krnl->active_mswp;
+
+    for (addr_t offset = 0; offset < PAGING_PAGESZ; offset++) {
+        BYTE data;
+        if (MEMPHY_read(mram, vicfpn * PAGING_PAGESZ + offset, &data) < 0)
+            return -1;
+        if (MEMPHY_write(mswp, swpfpn * PAGING_PAGESZ + offset, data) < 0)
+            return -1;
+    }
+
+    addr_t pgn = -1;
+    for (addr_t i = 0; i < PAGING_MAX_PGN; i++) {
+        uint32_t pte = pte_get_entry(caller, i);
+        if ((pte & PAGING_PTE_PRESENT_MASK) && PAGING_PTE_FPN(pte) == vicfpn) {
+            pgn = i;
+            break;
+        }
+    }
+
+    if (pgn == -1)
+        return -1;
+
+    // Step 3: Update the PTE to mark the page as swapped
+    if (pte_set_swap(caller, pgn, 0, swpfpn) < 0)
+        return -1;
+
     return 0;
+
 }
+
 
 /*get_vm_area_node - get vm area for a number of pages
  *@caller: caller
@@ -157,7 +192,50 @@ int inc_vma_limit(struct pcb_t *caller, int vmaid, addr_t inc_sz)
 //                   old_end, incnumpage , newrg) < 0)
 //    return -1; /* Map the memory to MEMRAM */
 
-  return 0;
+
+//   MY DO
+
+if (!caller || !caller->krnl || !caller->krnl->mm || inc_sz == 0)
+        return -1;
+
+    struct vm_area_struct *cur_vma = get_vma_by_num(caller->krnl->mm, vmaid);
+    if (!cur_vma)
+        return -1;
+
+    // Align size to page boundary
+    addr_t aligned_sz = PAGING_PAGE_ALIGNSZ(inc_sz);
+    addr_t old_sbrk = cur_vma->sbrk;
+    addr_t new_sbrk = old_sbrk + aligned_sz;
+
+    // Check if new sbrk exceeds vm_end
+    if (new_sbrk > cur_vma->vm_end)
+        return -1;
+
+    // Check for overlap with other VMAs
+    if (validate_overlap_vm_area(caller, vmaid, old_sbrk, new_sbrk) < 0)
+        return -1;
+
+    // Create new region
+    struct vm_rg_struct *newrg = init_vm_rg(old_sbrk, new_sbrk);
+    if (!newrg)
+        return -1;
+
+    // Add to vm_freerg_list
+    if (!cur_vma->vm_freerg_list)
+        cur_vma->vm_freerg_list = newrg;
+    else
+        enlist_vm_rg_node(&cur_vma->vm_freerg_list, newrg);
+
+    // Map pages to RAM
+    int incpgnum = aligned_sz / PAGING_PAGESZ;
+    if (vm_map_ram(caller, newrg->rg_start, newrg->rg_end, old_sbrk, incpgnum, newrg) < 0)
+        return -1;
+
+    // Update sbrk
+    cur_vma->sbrk = new_sbrk;
+
+    return 0;
+
 }
 
 // #endif
