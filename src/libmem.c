@@ -186,50 +186,38 @@ int pg_getpage(struct mm_struct *mm, int pgn, int *fpn, struct pcb_t *caller)
   if (!PAGING_PAGE_PRESENT(pte))
   { /* Page is not online, make it actively living */
     addr_t vicpgn, swpfpn;
-//    addr_t vicfpn;
-//    addr_t vicpte;
-//  struct sc_regs regs;
+    addr_t vicfpn;
+    uint32_t vicpte;
+    struct sc_regs regs;
 
     /* TODO Initialize the target frame storing our variable */
-//  addr_t tgtfpn 
+    addr_t tgtfpn;
 
     /* TODO: Play with your paging theory here */
     /* Find victim page */
-    if (find_victim_page(caller->krnl->mm, &vicpgn) == -1)
-    {
-      return -1;
-    }
-
+    if (find_victim_page(caller->krnl->mm, &vicpgn) == -1)  return -1;
     /* Get free frame in MEMSWP */
-    if (MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) == -1)
-    {
-      return -1;
-    }
+    if (MEMPHY_get_freefp(caller->krnl->active_mswp, &swpfpn) == -1) return -1;
 
     /* TODO: Implement swap frame from MEMRAM to MEMSWP and vice versa*/
+    vicpte = pte_get_entry(caller, vicpgn);
+    vicfpn = PAGING_PTE_FPN(vicpte);
+    
+
 
     /* TODO copy victim frame to swap 
      * SWP(vicfpn <--> swpfpn)
      * SYSCALL 1 sys_memmap
      */
-    uint32_t vicpte = pte_get_entry(caller, vicpgn);
-    addr_t vicfpn = PAGING_PTE_FPN(vicpte);
-    for (addr_t offset = 0; offset < PAGING_PAGESZ; offset++) {
-            BYTE data;
-            if (MEMPHY_read(caller->krnl->mram, vicfpn * PAGING_PAGESZ + offset, &data) < 0)
-                return -1;
-            if (MEMPHY_write(caller->krnl->active_mswp, swpfpn * PAGING_PAGESZ + offset, data) < 0)
-                return -1;
-        }
-
+    regs.a1 = SYSMEM_SWP_OP;   
+    regs.a2 = vicpgn;          
+    regs.a3 = swpfpn;         
+    syscall(caller->krnl, caller->pid, 1, &regs);
 
     /* Update page table */
     //pte_set_swap(...);
-    if (pte_set_swap(caller, vicpgn, 0, swpfpn) < 0)
-      return -1;
-    addr_t tgtfpn;
-    if (MEMPHY_get_freefp(caller->krnl->mram, &tgtfpn) == -1)
-      return -1;
+    if (pte_set_swap(caller, vicpgn, 0, swpfpn) < 0)  return -1;
+    if (MEMPHY_get_freefp(caller->krnl->mram, &tgtfpn) == -1) return -1;
 
     /* Update its online status of the target page */
     //pte_set_fpn(...);
