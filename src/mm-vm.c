@@ -49,7 +49,7 @@ int __mm_swap_page(struct pcb_t *caller, addr_t vicfpn , addr_t swpfpn)
   __swap_cp_page(caller->krnl->mram, vicfpn, caller->krnl->active_mswp, swpfpn);
   return 0;
 
-  /* ????????
+  /* ?????????????????????????
       // Validate caller and required kernel memory structures
     if (!caller || !caller->mram || !caller->active_mswp)
         return -1;
