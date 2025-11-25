@@ -12,15 +12,19 @@ int empty(struct queue_t *q)
 void enqueue(struct queue_t *q, struct pcb_t *proc)
 {
         /* TODO: put a new process to queue [q] */
-        if (q == NULL || proc == NULL)
-                return;
+        if (q == NULL || proc == NULL) return;
 
-        if (q->size >= MAX_QUEUE_SIZE) {
-                fprintf(stderr, "enqueue: queue full, cannot add pid=%u\n", proc->pid);
-                return;
+        if (q->size == MAX_QUEUE_SIZE) return;
+
+        int i = q->size - 1;
+
+        while (i >= 0 && (q->proc[i]->prio > proc->prio))
+        {
+                q->proc [i + 1] = q->proc[i];
+                i--;
         }
 
-        q->proc[q->size] = proc;
+        q->proc [i + 1] = proc;
         q->size++;
 }
 
@@ -30,18 +34,15 @@ struct pcb_t *dequeue(struct queue_t *q)
          * in the queue [q] and remember to remove it from q
          * */
 
-        if (q == NULL || q->size == 0)
-                return NULL;
+        if (q == NULL || q->size == 0) return NULL;
 
-        /* Return the front (FIFO) element */
-        struct pcb_t *ret = q->proc[0];
+        struct pcb_t* maxPrior = q->proc[0];
 
-        /* shift remaining elements left */
-        for (int i = 1; i < q->size; i++)
-                q->proc[i - 1] = q->proc[i];
+        for (int i=0; i < q->size - 1; i++) q->proc [i] = q->proc [i + 1];
 
+        q->proc [q->size - 1] = NULL;
         q->size--;
-        return ret;
+        return maxPrior;
 }
 
 struct pcb_t *purgequeue(struct queue_t *q, struct pcb_t *proc)
