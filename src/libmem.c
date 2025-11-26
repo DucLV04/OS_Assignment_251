@@ -119,7 +119,7 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
 
   pthread_mutex_unlock(&mmvm_lock);
   printf("liballoc:178\n");
-  print_pgtbl(caller, *alloc_addr, *alloc_addr + size);
+  //print_pgtbl(caller, *alloc_addr, *alloc_addr + size);
   return 0;
 }
 
@@ -143,7 +143,7 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
     return -1;
   }
   printf("libfree:218\n");
-  print_pgtbl(caller, rgnode->rg_start, rgnode->rg_end);
+  //print_pgtbl(caller, rgnode->rg_start, rgnode->rg_end);
   struct vm_rg_struct *freerg_node = malloc(sizeof(struct vm_rg_struct));
   freerg_node->rg_start = rgnode->rg_start;
   freerg_node->rg_end = rgnode->rg_end;
@@ -206,6 +206,7 @@ int libfree(struct pcb_t *proc, uint32_t reg_index)
 #endif
   return 0;//val;
 }
+
 
 /*pg_getpage - get the page in ram
  *@mm: memory region
@@ -413,7 +414,7 @@ int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
   }
-
+  
   pthread_mutex_unlock(&mmvm_lock);
   return 0;
 }
@@ -439,12 +440,12 @@ struct vm_rg_struct *currg = get_symrg_byid(proc->mm, destination);
     print_pgtbl(proc, currg->rg_start + offset, 0);
 }
 
-// #ifdef IODUMP
-// #ifdef PAGETBL_DUMP
-//   print_pgtbl(proc, 0, -1); // print max TBL
-// #endif
-//   MEMPHY_dump(proc->krnl->mram);
-// #endif
+ #ifdef IODUMP
+ #ifdef PAGETBL_DUMP
+  // print_pgtbl(proc, 0, -1); // print max TBL
+ #endif
+   //MEMPHY_dump(proc->krnl->mram);
+ #endif
 
   return val;
 }
@@ -554,3 +555,6 @@ int get_free_vmrg_area(struct pcb_t *caller, int vmaid, int size, struct vm_rg_s
 
   return 0;
 }
+
+
+
