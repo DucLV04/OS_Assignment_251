@@ -57,25 +57,25 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
   /*Allocate at the toproof */
   pthread_mutex_lock(&mmvm_lock);
   struct vm_rg_struct rgnode;
-  /* FIX: Dùng caller->mm */
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_area_struct *cur_vma = get_vma_by_num(caller->krnl->mm, vmaid);
   int inc_sz=0;
 
+  if (!cur_vma) {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
   if (get_free_vmrg_area(caller, vmaid, size, &rgnode) == 0)
   {
-    /* FIX: Dùng caller->mm */
-    caller->mm->symrgtbl[rgid].rg_start = rgnode.rg_start;
-    caller->mm->symrgtbl[rgid].rg_end = rgnode.rg_end;
- 
+    caller->krnl->mm->symrgtbl[rgid].rg_start = rgnode.rg_start;
+    caller->krnl->mm->symrgtbl[rgid].rg_end = rgnode.rg_end;
+    caller->krnl->mm->symrgtbl[rgid].rg_next  = NULL;
     *alloc_addr = rgnode.rg_start;
 
     pthread_mutex_unlock(&mmvm_lock);
-    
-    printf("liballoc:178\n");
-    print_pgtbl(caller, *alloc_addr, *alloc_addr + size);
-
     return 0;
   }
+
+  /* TODO get_free_vmrg_area FAILED handle the region management (Fig.6)*/
 
   /*Attempt to increate limit to get space */
 #ifdef MM64
@@ -85,9 +85,13 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
   inc_sz = PAGING_PAGE_ALIGNSZ(size);
 #endif
   int old_sbrk;
+  inc_sz = inc_sz + 1;
 
   old_sbrk = cur_vma->sbrk;
 
+  /* TODO INCREASE THE LIMIT
+   * SYSCALL 1 sys_memmap
+   */
   struct sc_regs regs;
   regs.a1 = SYSMEM_INC_OP;
   regs.a2 = vmaid;
@@ -99,19 +103,26 @@ int __alloc(struct pcb_t *caller, int vmaid, int rgid, addr_t size, addr_t *allo
   syscall(caller->krnl, caller->pid, 17, &regs); /* SYSCALL 17 sys_memmap */
 
   /*Successful increase limit */
-  /* FIX: Dùng caller->mm */
-  caller->mm->symrgtbl[rgid].rg_start = old_sbrk;
-  caller->mm->symrgtbl[rgid].rg_end = old_sbrk + size;
+  caller->krnl->mm->symrgtbl[rgid].rg_start = old_sbrk;
+  caller->krnl->mm->symrgtbl[rgid].rg_end = old_sbrk + size;
 
   *alloc_addr = old_sbrk;
+  if (inc_sz > size) {
+    struct vm_rg_struct *freerg = malloc(sizeof(struct vm_rg_struct));
+    if (freerg) {
+      freerg->rg_start = old_sbrk + size;
+      freerg->rg_end   = old_sbrk + inc_sz;
+      freerg->rg_next  = NULL;
+      enlist_vm_freerg_list(caller->krnl->mm, freerg);
+    }
+  }
 
   pthread_mutex_unlock(&mmvm_lock);
-  
   printf("liballoc:178\n");
   print_pgtbl(caller, *alloc_addr, *alloc_addr + size);
-
   return 0;
 }
+
 
 /*__free - remove a region memory */
 int __free(struct pcb_t *caller, int vmaid, int rgid)
@@ -124,18 +135,15 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
     return -1;
   }
 
-  /* FIX: Dùng caller->mm */
-  struct vm_rg_struct *rgnode = get_symrg_byid(caller->mm, rgid);
+  struct vm_rg_struct *rgnode = get_symrg_byid(caller->krnl->mm, rgid);
 
   if (rgnode->rg_start == 0 && rgnode->rg_end == 0)
   {
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
   }
-  
   printf("libfree:218\n");
   print_pgtbl(caller, rgnode->rg_start, rgnode->rg_end);
-
   struct vm_rg_struct *freerg_node = malloc(sizeof(struct vm_rg_struct));
   freerg_node->rg_start = rgnode->rg_start;
   freerg_node->rg_end = rgnode->rg_end;
@@ -145,7 +153,8 @@ int __free(struct pcb_t *caller, int vmaid, int rgid)
   rgnode->rg_next = NULL;
 
   /*enlist the obsoleted memory region */
-  enlist_vm_freerg_list(caller->mm, freerg_node);
+  enlist_vm_freerg_list(caller->krnl->mm, freerg_node);
+  //merge_vm_freerg_list(caller->krnl->mm);
 
   pthread_mutex_unlock(&mmvm_lock);
   return 0;
@@ -157,19 +166,46 @@ int liballoc(struct pcb_t *proc, addr_t size, uint32_t reg_index)
   addr_t  addr;
 
   int val = __alloc(proc, 0, reg_index, size, &addr);
-  if (val == -1) return -1;
+  if (val == -1)
+  {
+    return -1;
+  }
 
-  return val;
+
+
+#ifdef IODUMP
+  /* TODO dump IO content (if needed) */
+#ifdef PAGETBL_DUMP
+  print_pgtbl(proc, 0, -1); // print max TBL
+#endif
+#endif
+
+  /* By default using vmaid = 0 */
+  return 0;
 }
+/*libfree - PAGING-based free a region memory
+ *@proc: Process executing the instruction
+ *@size: allocated size
+ *@reg_index: memory region ID (used to identify variable in symbole table)
+ */
 
-/*libfree - PAGING-based free a region memory */
 int libfree(struct pcb_t *proc, uint32_t reg_index)
 {
   int val = __free(proc, 0, reg_index);
-  if (val == -1) return -1;
-  return 0;
-}
+  if (val == -1)
+  {
+    return -1;
+  }
 
+
+#ifdef IODUMP
+  /* TODO dump IO content (if needed) */
+#ifdef PAGETBL_DUMP
+  print_pgtbl(proc, 0, -1); // print max TBL
+#endif
+#endif
+  return 0;//val;
+}
 
 /*pg_getpage - get the page in ram
  *@mm: memory region
@@ -302,24 +338,32 @@ int pg_setval(struct mm_struct *mm, int addr, BYTE value, struct pcb_t *caller)
 /*__read - read value in region memory */
 int __read(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE *data)
 {
-  /* FIX: Dùng caller->mm */
-  struct vm_rg_struct *currg = get_symrg_byid(caller->mm, rgid);
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_rg_struct *currg = get_symrg_byid(caller->krnl->mm, rgid);
 
-  if (currg == NULL || cur_vma == NULL)
+  struct vm_area_struct *cur_vma = get_vma_by_num(caller->krnl->mm, vmaid);
+
+  /* TODO Invalid memory identify */
+  if (!currg || !cur_vma)
     return -1;
 
-  /* FIX: Dùng caller->mm */
-  pg_getval(caller->mm, currg->rg_start + offset, data, caller);
+  if (currg->rg_start == 0 && currg->rg_end == 0)
+    return -1;
+
+  if (offset >= (currg->rg_end - currg->rg_start))
+    return -1;
+
+  if (pg_getval(caller->krnl->mm, currg->rg_start + offset, data, caller) != 0)
+    return -1;
 
   return 0;
 }
 
+
 /*libread - PAGING-based read a region memory */
 int libread(
-    struct pcb_t *proc, 
-    uint32_t source,    
-    addr_t offset,    
+    struct pcb_t *proc, // Process executing the instruction
+    uint32_t source,    // Index of source register
+    addr_t offset,    // Source address = [source] + [offset]
     uint32_t* destination)
 {
   BYTE data;
@@ -327,47 +371,80 @@ int libread(
 
   *destination = data;
 
-  printf("libread:426\n");
+printf("libread:426\n");
+
+
+#ifdef IODUMP
+  /* TODO dump IO content (if needed) */
+#ifdef PAGETBL_DUMP
+  print_pgtbl(proc, 0, -1); // print max TBL
+#endif
+#endif
+
   return val;
 }
+
 
 /*__write - write a region memory */
 int __write(struct pcb_t *caller, int vmaid, int rgid, addr_t offset, BYTE value)
 {
   pthread_mutex_lock(&mmvm_lock);
-  /* FIX: Dùng caller->mm */
-  struct vm_rg_struct *currg = get_symrg_byid(caller->mm, rgid);
-  struct vm_area_struct *cur_vma = get_vma_by_num(caller->mm, vmaid);
+  struct vm_rg_struct *currg = get_symrg_byid(caller->krnl->mm, rgid);
 
-  if (currg == NULL || cur_vma == NULL) {
+  struct vm_area_struct *cur_vma = get_vma_by_num(caller->krnl->mm, vmaid);
+
+  if (currg == NULL || cur_vma == NULL) /* Invalid memory identify */
+  {
     pthread_mutex_unlock(&mmvm_lock);
     return -1;
   }
-
-  /* FIX: Dùng caller->mm */
-  pg_setval(caller->mm, currg->rg_start + offset, value, caller);
+  if (currg->rg_start == 0 && currg->rg_end == 0)
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
+  if (offset >= (currg->rg_end - currg->rg_start))
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
+  if (pg_setval(caller->krnl->mm, currg->rg_start + offset, value, caller) != 0)
+  {
+    pthread_mutex_unlock(&mmvm_lock);
+    return -1;
+  }
 
   pthread_mutex_unlock(&mmvm_lock);
   return 0;
 }
 
+
 /*libwrite - PAGING-based write a region memory */
 int libwrite(
-    struct pcb_t *proc,   
-    BYTE data,            
-    uint32_t destination, 
+    struct pcb_t *proc,   // Process executing the instruction
+    BYTE data,            // Data to be wrttien into memory
+    uint32_t destination, // Index of destination register
     addr_t offset)
 {
   int val = __write(proc, 0, destination, offset, data);
-  if (val == -1) return -1;
-
-  printf("libwrite:502\n");
-  
-  /* FIX: Dùng proc->mm */
-  struct vm_rg_struct *currg = get_symrg_byid(proc->mm, destination);
-  if (currg) {
-      print_pgtbl(proc, currg->rg_start + offset, 0);
+  if (val == -1)
+  {
+    return -1;
   }
+
+printf("libwrite:502\n");
+
+struct vm_rg_struct *currg = get_symrg_byid(proc->mm, destination);
+ if (currg) {
+    print_pgtbl(proc, currg->rg_start + offset, 0);
+}
+
+// #ifdef IODUMP
+// #ifdef PAGETBL_DUMP
+//   print_pgtbl(proc, 0, -1); // print max TBL
+// #endif
+//   MEMPHY_dump(proc->krnl->mram);
+// #endif
 
   return val;
 }
