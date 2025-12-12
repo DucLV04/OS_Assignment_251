@@ -67,36 +67,33 @@ void init_scheduler(void) {
  * - Skip empty queues and continue searching up to MAX_PRIO queues.
  */
 struct pcb_t * get_mlq_proc(void) {
-	struct pcb_t *proc = NULL;
+    struct pcb_t * proc = NULL;
 
-	pthread_mutex_lock(&queue_lock);
+    pthread_mutex_lock(&queue_lock);
 
-	/* Try up to MAX_PRIO different priority levels to find a runnable proc */
-	for (int tries = 0; tries < MAX_PRIO; tries++) {
-		int p = curr_prio_idx;
-
-		/* If current priority queue has entries and we haven't exhausted its slot */
-		if (!empty(&mlq_ready_queue[p]) && curr_prio_used < slot[p]) {
-			proc = dequeue(&mlq_ready_queue[p]);
-			curr_prio_used++;
-			/* If we consumed the full slot for this priority, advance to next */
-			if (curr_prio_used >= slot[p]) {
-				curr_prio_idx = (p + 1) % MAX_PRIO;
-				curr_prio_used = 0;
-			}
-			break;
-		}
-
-		/* advance to next priority and reset usage counter for that priority */
-		curr_prio_idx = (curr_prio_idx + 1) % MAX_PRIO;
-		curr_prio_used = 0;
-	}
-
-	if (proc != NULL)
-		enqueue(&running_list, proc);
-
-	pthread_mutex_unlock(&queue_lock);
-	return proc;
+    /* Duyệt từ mức ưu tiên cao nhất (0) đến thấp nhất */
+    for (int i = 0; i < MAX_PRIO; i++) {
+        if (!empty(&mlq_ready_queue[i])) {
+            
+            // Vẫn còn Slot > 0 
+            if (slot[i] > 0) {
+                proc = dequeue(&mlq_ready_queue[i]);
+                slot[i]--;
+                break; 
+            } 
+            // Hết Slot <= 0 
+            else {
+                /* Reset lại Slot cho lần sau */
+                slot[i] = MAX_PRIO - i;
+                
+                /* Nhường lượt cho hàng đợi ưu tiên thấp hơn ()
+                 * system must change the resource (page 10)*/
+                continue; 
+            }
+        }
+    }
+    pthread_mutex_unlock(&queue_lock);
+    return proc;
 }
 
 void put_mlq_proc(struct pcb_t * proc) {
@@ -185,5 +182,6 @@ void add_proc(struct pcb_t * proc) {
 	pthread_mutex_unlock(&queue_lock);	
 }
 #endif
+
 
 
